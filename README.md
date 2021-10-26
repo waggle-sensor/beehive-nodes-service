@@ -1,2 +1,2 @@
 # beehive-nodes-service
-Service that updates beehive component about new nodes
+This service gets a list of nodes from beekeeper and creates RabbitMQ users for each node if they do not yet exist via the RabbitMQ management API. This service is trigger by a simple GET request on resource `/sync` and returns the repsonse string `ok`.
