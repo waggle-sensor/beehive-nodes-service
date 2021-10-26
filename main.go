@@ -139,6 +139,7 @@ func syncListener(w http.ResponseWriter, req *http.Request) {
 	err := Sync()
 
 	if err != nil {
+		fmt.Printf("returned error: %s\n", err.Error())
 		http.Error(w, fmt.Sprintf("error: %s", err.Error()), http.StatusInternalServerError)
 		return
 	}
