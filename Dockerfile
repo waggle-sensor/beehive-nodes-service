@@ -1,15 +1,9 @@
-
-
-
-# docker build -t waggle/beehive-nodes-service .
-# docker run -ti --env UPLOADER_URL=http://gateway.docker.internal:8080 --env NODE_STATE_API=... waggle/beehive-nodes-service
-
-FROM golang:1.17-alpine
-
-WORKDIR /go/src/app
+FROM golang:1.20 AS builder
+WORKDIR /build
 COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o beehive-nodes-service
 
-RUN go get -d -v ./...
-RUN go install -v ./...
-
-CMD ["beehive-nodes-service"]
+FROM scratch
+COPY --from=builder /build/beehive-nodes-service /beehive-nodes-service
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENTRYPOINT [ "/beehive-nodes-service" ]
