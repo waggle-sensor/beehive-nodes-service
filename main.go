@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	rabbithole "github.com/michaelklishin/rabbit-hole"
+	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 )
 
 type NodeObj struct {
@@ -233,7 +233,6 @@ func syncListener(w http.ResponseWriter, req *http.Request) {
 // kubectl port-forward deployment/beehive-rabbitmq 15672 -n shared
 
 func main() {
-
 	// sync on start once:
 	err := Sync()
 	if err != nil {
@@ -247,3 +246,5 @@ func main() {
 	fmt.Println("listening on port 80...")
 	http.ListenAndServe(":80", nil)
 }
+
+// TODO(sean) Understand why RMQ needs a sidecar which reaches out to this service and possibly redesign to eliminate this entirely.
