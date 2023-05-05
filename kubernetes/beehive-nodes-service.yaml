@@ -34,19 +34,14 @@ spec:
         app: beehive-nodes-service
     spec:
       containers:
-      - name: beehive-nodes-service
-        image: waggle/beehive-nodes-service
-        envFrom:
-        - configMapRef:
-            name: beehive-nodes-service
-        ports:
-        - containerPort: 80
-        livenessProbe:
-          exec:
-            command: ["/bin/sh", "-ec", "beehive-nodes-service -q ping"]
-          initialDelaySeconds: 30
-          periodSeconds: 15
-          timeoutSeconds: 10
-
-
-
+        - name: beehive-nodes-service
+          image: waggle/beehive-nodes-service
+          envFrom:
+            - configMapRef:
+                name: beehive-nodes-service
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80

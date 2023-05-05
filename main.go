@@ -243,8 +243,10 @@ func main() {
 	http.HandleFunc("/sync", syncListener)
 	http.HandleFunc("/", rootListener)
 
-	fmt.Println("listening on port 80...")
-	http.ListenAndServe(":80", nil)
+	log.Printf("listening on :80")
+	if err := http.ListenAndServe(":80", nil); err != nil {
+		log.Fatalf("server error: %s", err)
+	}
 }
 
 // TODO(sean) Understand why RMQ needs a sidecar which reaches out to this service and possibly redesign to eliminate this entirely.
