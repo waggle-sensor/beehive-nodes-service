@@ -155,17 +155,15 @@ func syncUsers(config *Config) error {
 	return nil
 }
 
-// for testing:
-// kubectl port-forward deployment/beehive-rabbitmq 15672 -n shared
-
 func main() {
 	config := mustGetConfigFromEnv()
 
-	// Sync once at startup and then every 5 minutes.
+	// Sync once immediately at startup.
 	if err := syncUsers(config); err != nil {
 		fmt.Printf("failed to sync users: %s\n", err.Error())
 	}
 
+	// Sync every 5 minutes.
 	ticker := time.NewTicker(5 * time.Minute)
 
 	for range ticker.C {
