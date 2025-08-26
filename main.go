@@ -15,11 +15,6 @@ type Account struct {
 	Active   bool
 }
 
-type Metrics struct {
-	RabbitmqUsersUpdated     int
-	UploadServerUsersUpdated int
-}
-
 func getAccounts(nodeStateURL string) ([]Account, error) {
 	usernameActive := map[string]bool{}
 
@@ -88,7 +83,9 @@ func updateRabbitmqUser(rmqclient *rabbithole.Client, username string) error {
 	return nil
 }
 
-func updateUploaderAccounts(accounts []Account, url string, metrics *Metrics) error {
+func updateUploaderAccounts(accounts []Account, url string) error {
+	fmt.Printf("updating upload server accounts\n")
+
 	resp, err := http.Get(url + "/user")
 	if err != nil {
 		return fmt.Errorf("failed to get user data: %s", err.Error())
@@ -120,15 +117,15 @@ func updateUploaderAccounts(accounts []Account, url string, metrics *Metrics) er
 			} else if resp.StatusCode != http.StatusOK {
 				return fmt.Errorf("adding user to uploader failed")
 			}
-
-			metrics.UploadServerUsersUpdated++
 		}
 	}
 
 	return nil
 }
 
-func updateRabbitmqAccounts(accounts []Account, url string, username string, password string, metrics *Metrics) error {
+func updateRabbitmqAccounts(accounts []Account, url string, username string, password string) error {
+	fmt.Printf("updating rabbitmq server accounts\n")
+
 	rmqClient, err := rabbithole.NewClient(url, username, password)
 	if err != nil {
 		return fmt.Errorf("failed to create rabbithole client: %s", err.Error())
@@ -146,13 +143,11 @@ func updateRabbitmqAccounts(accounts []Account, url string, username string, pas
 
 	for _, account := range accounts {
 		if account.Active && !hasUsername[account.Username] {
-			fmt.Printf("adding rmq user %s\n", account.Username)
+			fmt.Printf("adding rabbitmq user %s\n", account.Username)
 
 			if err := updateRabbitmqUser(rmqClient, account.Username); err != nil {
 				return fmt.Errorf("failed to update rabbitmq user: %s", err.Error())
 			}
-
-			metrics.RabbitmqUsersUpdated++
 		}
 	}
 
@@ -161,29 +156,23 @@ func updateRabbitmqAccounts(accounts []Account, url string, username string, pas
 
 // Updates the RabbitMQ and uploader server node users.
 func syncUsers(config *Config) error {
-	metrics := &Metrics{}
-
 	accounts, err := getAccounts(config.NodeStateURL)
 	if err != nil {
 		return fmt.Errorf("failed to get accounts: %s", err.Error())
 	}
 
-	fmt.Printf("the following accounts were provided:\n\nUsername\tActive\n")
+	fmt.Printf("found the following accounts:\nusername\tactive\n")
 
 	for _, account := range accounts {
 		fmt.Printf("%s\t%v\n", account.Username, account.Active)
 	}
 	fmt.Printf("\n")
 
-	if err := updateRabbitmqAccounts(accounts, config.RabbitmqURL, config.RabbitmqUsername, config.RabbitmqPassword, metrics); err == nil {
-		fmt.Printf("added %d users to rabbitmq\n", metrics.RabbitmqUsersUpdated)
-	} else {
+	if err := updateRabbitmqAccounts(accounts, config.RabbitmqURL, config.RabbitmqUsername, config.RabbitmqPassword); err != nil {
 		fmt.Printf("failed to sync rabbitmq users: %s\n", err.Error())
 	}
 
-	if err := updateUploaderAccounts(accounts, config.UploadServerURL, metrics); err == nil {
-		fmt.Printf("added %d users to upload server\n", metrics.UploadServerUsersUpdated)
-	} else {
+	if err := updateUploaderAccounts(accounts, config.UploadServerURL); err != nil {
 		fmt.Printf("failed to sync upload server users: %s\n", err.Error())
 	}
 
