@@ -3,250 +3,174 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
 	"strings"
+	"time"
 
 	rabbithole "github.com/michaelklishin/rabbit-hole/v2"
 )
 
-type NodeObj struct {
+type Node struct {
 	ID string `json:"id"`
 }
 
-type APIResponse struct {
-	Data []NodeObj
+type Metrics struct {
+	RabbitmqUsersUpdated     int
+	UploadServerUsersUpdated int
 }
 
-type UploaderListResponse struct {
-	Data []string `json:"data"`
-}
-
-func getBeekeeperNodeList(node_state_api string) (node_list []NodeObj, err error) {
-	api_resp := &APIResponse{}
-
-	resp, err := http.Get(node_state_api)
+func getBeekeeperNodes(nodeStateURL string) ([]Node, error) {
+	resp, err := http.Get(nodeStateURL)
 	if err != nil {
-		err = fmt.Errorf("http.Get error: %s", err.Error())
-		return
+		return nil, fmt.Errorf("failed to get node state data: %s", err.Error())
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(api_resp)
-	if err != nil {
-		err = fmt.Errorf("json.NewDecoder error: %s", err.Error())
-		return
+	var nodeState struct {
+		Data []Node
 	}
-
-	node_list = api_resp.Data
-
-	return
-
+	if err := json.NewDecoder(resp.Body).Decode(&nodeState); err != nil {
+		return nil, fmt.Errorf("failed to decode node state data: %s", err.Error())
+	}
+	return nodeState.Data, nil
 }
 
-func updateRabbitmqUser(rmqclient *rabbithole.Client, username string) (err error) {
-	if _, err = rmqclient.PutUser(username, rabbithole.UserSettings{Password: "secret"}); err != nil {
-		err = fmt.Errorf("rmqclient.PutUser error: %s", err.Error())
-		return
+func updateRabbitmqUser(rmqclient *rabbithole.Client, username string) error {
+	if _, err := rmqclient.PutUser(username, rabbithole.UserSettings{Password: "secret"}); err != nil {
+		return fmt.Errorf("failed to setup user %s: %s", username, err.Error())
 	}
 
-	if _, err = rmqclient.UpdatePermissionsIn("/", username, rabbithole.Permissions{
+	if _, err := rmqclient.UpdatePermissionsIn("/", username, rabbithole.Permissions{
 		Configure: "^amq.gen",
 		Read:      ".*",
 		Write:     ".*",
 	}); err != nil {
-		err = fmt.Errorf("rmqclient.UpdatePermissionsIn error: %s", err.Error())
-		return
+		return fmt.Errorf("failed to update permissions for user %s: %s", username, err.Error())
 	}
 
 	return nil
 }
 
-func updateUploader(node_list []NodeObj, url string) (updated int, err error) {
-
+func updateUploader(nodes []Node, url string, metrics *Metrics) error {
 	resp, err := http.Get(url + "/user")
 	if err != nil {
-		err = fmt.Errorf("http.Get error: %s", err.Error())
-		return
+		return fmt.Errorf("failed to get user data: %s", err.Error())
 	}
 
-	api_resp := &UploaderListResponse{}
-	err = json.NewDecoder(resp.Body).Decode(api_resp)
-	if err != nil {
-		err = fmt.Errorf("json.NewDecoder error: %s", err.Error())
-		return
+	var apiResp struct {
+		Data []string `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return fmt.Errorf("failed to decode user data: %s", err.Error())
 	}
 
-	uploader_node_list := api_resp.Data
+	uploadServerUsernames := apiResp.Data
 
-	existing_users := make(map[string]bool)
+	hasUsername := make(map[string]bool)
 
-	for _, elem := range uploader_node_list {
-		existing_users[elem] = true
+	for _, username := range uploadServerUsernames {
+		hasUsername[username] = true
 	}
 
-	for _, node_obj := range node_list {
+	for _, node := range nodes {
+		username := fmt.Sprintf("node-%s", strings.ToLower(node.ID))
 
-		node_username := fmt.Sprintf("node-%s", strings.ToLower(node_obj.ID))
-
-		_, ok := existing_users[node_username]
-		if ok {
+		if hasUsername[username] {
 			continue
 		}
-		fmt.Println("adding user to uploader: ", node_username)
-		// add user
-		var resp *http.Response
-		resp, err = http.Post(url+"/user/"+node_username, "", nil)
-		if err != nil {
-			err = fmt.Errorf("Adding user to uploader failed: %s\n", err.Error())
-			return
+
+		fmt.Println("adding user to uploader: ", username)
+
+		if resp, err := http.Post(url+"/user/"+username, "", nil); err != nil {
+			return fmt.Errorf("adding user to uploader failed: %s", err.Error())
+		} else if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("adding user to uploader failed")
 		}
-		if resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("Adding user to uploader failed.\n")
-			return
-		}
-		updated++
+
+		metrics.UploadServerUsersUpdated++
 	}
-	return
+
+	return nil
 }
 
-func updateRMQ(node_list []NodeObj, url string, username string, password string) (updated int, err error) {
-	rmqc, err := rabbithole.NewClient(url, username, password)
+func updateRabbitmq(nodes []Node, url string, username string, password string, metrics *Metrics) error {
+	rmqClient, err := rabbithole.NewClient(url, username, password)
 	if err != nil {
-		err = fmt.Errorf("rabbithole.NewClient error: %s", err.Error())
-		return
+		return fmt.Errorf("failed to create rabbithole client: %s", err.Error())
 	}
 
-	var xs []rabbithole.UserInfo
-	xs, err = rmqc.ListUsers()
+	existingUsers, err := rmqClient.ListUsers()
 	if err != nil {
-		err = fmt.Errorf("ListUsers error: %s", err.Error())
-		return
+		return fmt.Errorf("failed to list rabbitmq users: %s", err.Error())
 	}
-	fmt.Println("Beekeeper reported nodes:")
 
-	existing_users := make(map[string]rabbithole.UserInfo, 0)
-	for _, elem := range xs {
-		fmt.Println(elem.Name)
-		existing_users[strings.ToLower(elem.Name)] = elem
+	hasUsername := map[string]bool{}
+	for _, user := range existingUsers {
+		hasUsername[user.Name] = true
 	}
-	fmt.Println("----")
+
 	// add missing users to RMQ
-	for _, node_obj := range node_list {
+	for _, node := range nodes {
+		username := fmt.Sprintf("node-%s", strings.ToLower(node.ID))
 
-		node_rmq_user := fmt.Sprintf("node-%s", strings.ToLower(node_obj.ID))
-
-		_, ok := existing_users[node_rmq_user]
-		if ok {
+		if hasUsername[username] {
 			continue
 		}
 
-		fmt.Printf("adding rmq user %s...\n", node_rmq_user)
-		err = updateRabbitmqUser(rmqc, node_rmq_user)
-		if err != nil {
-			err = fmt.Errorf("updateRabbitmqUser error: %s", err.Error())
-			return
+		fmt.Printf("adding rmq user %s\n", username)
+
+		if err := updateRabbitmqUser(rmqClient, username); err != nil {
+			return fmt.Errorf("failed to update rabbitmq user: %s", err.Error())
 		}
-		updated++
+
+		metrics.RabbitmqUsersUpdated++
 	}
 
-	fmt.Printf("%d rmq users added.\n", updated)
-
-	return
+	return nil
 }
 
-// get list of node from beekeeper
-// then update RabbitMQ and the uploader if needed.
-func Sync() (err error) {
-	NODE_STATE_API := os.Getenv("NODE_STATE_API")
-	if NODE_STATE_API == "" {
-		log.Fatalf("NODE_STATE_API not defined")
-	}
+// Updates the RabbitMQ and uploader server node users.
+func syncUsers(config *Config) error {
+	metrics := &Metrics{}
 
-	RMQ_URL := os.Getenv("RMQ_URL")
-	RMQ_USERNAME := os.Getenv("RMQ_USERNAME")
-	RMQ_PASSWORD := os.Getenv("RMQ_PASSWORD")
-
-	UPLOADER_URL := os.Getenv("UPLOADER_URL")
-
-	if RMQ_URL != "" {
-		fmt.Printf("RMQ_USERNAME: %s\n", RMQ_USERNAME)
-		if RMQ_USERNAME == "" {
-			log.Fatalf("RMQ_USERNAME not defined")
-		}
-	}
-
-	node_list, err := getBeekeeperNodeList(NODE_STATE_API)
+	nodes, err := getBeekeeperNodes(config.NodeStateURL)
 	if err != nil {
-		err = fmt.Errorf("getBeekeeperNodeList: %s", err.Error())
-		return
+		return fmt.Errorf("getBeekeeperNodeList: %s", err.Error())
 	}
-	for _, node_obj := range node_list {
-		fmt.Println("got: ", node_obj.ID)
+	for _, node := range nodes {
+		fmt.Printf("got: %s\n", node.ID)
 	}
 
-	updated := 0
-	if RMQ_URL != "" {
-		updated, err = updateRMQ(node_list, RMQ_URL, RMQ_USERNAME, RMQ_PASSWORD)
-		if err != nil {
-			err = fmt.Errorf("updateRMQ error: %s", err.Error())
-			return
-		}
-		fmt.Printf("Added %d users to rabbitmq\n", updated)
+	if err := updateRabbitmq(nodes, config.RabbitmqURL, config.RabbitmqUsername, config.RabbitmqPassword, metrics); err == nil {
+		fmt.Printf("added %d users to rabbitmq\n", metrics.RabbitmqUsersUpdated)
 	} else {
-		fmt.Println("RMQ_URL not defined, skipping...")
+		fmt.Printf("failed to sync rabbitmq users: %s\n", err.Error())
 	}
 
-	if UPLOADER_URL != "" {
-		updated, err = updateUploader(node_list, UPLOADER_URL)
-		if err != nil {
-			err = fmt.Errorf("updateUploader error: %s", err.Error())
-			return
-		}
-		fmt.Printf("Added %d users to uploader\n", updated)
-
+	if err := updateUploader(nodes, config.UploadServerURL, metrics); err == nil {
+		fmt.Printf("added %d users to upload server\n", metrics.UploadServerUsersUpdated)
 	} else {
-		fmt.Println("UPLOADER_URL not defined, skipping...")
+		fmt.Printf("failed to sync upload server users: %s\n", err.Error())
 	}
 
-	return
-}
-
-func rootListener(w http.ResponseWriter, req *http.Request) {
-	fmt.Fprintf(w, "alive")
-}
-
-func syncListener(w http.ResponseWriter, req *http.Request) {
-	fmt.Println("/sync was called")
-	err := Sync()
-
-	if err != nil {
-		fmt.Printf("returned error: %s\n", err.Error())
-		http.Error(w, fmt.Sprintf("error: %s", err.Error()), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprintf(w, "ok")
+	return nil
 }
 
 // for testing:
 // kubectl port-forward deployment/beehive-rabbitmq 15672 -n shared
 
 func main() {
-	// sync on start once:
-	err := Sync()
-	if err != nil {
-		fmt.Printf("error: %s\n", err.Error())
-		err = nil
+	config := mustGetConfigFromEnv()
+
+	// Sync once at startup and then every 5 minutes.
+	if err := syncUsers(config); err != nil {
+		fmt.Printf("failed to sync users: %s\n", err.Error())
 	}
 
-	http.HandleFunc("/sync", syncListener)
-	http.HandleFunc("/", rootListener)
+	ticker := time.NewTicker(5 * time.Minute)
 
-	log.Printf("listening on :80")
-	if err := http.ListenAndServe(":80", nil); err != nil {
-		log.Fatalf("server error: %s", err)
+	for range ticker.C {
+		if err := syncUsers(config); err != nil {
+			fmt.Printf("failed to sync users: %s\n", err.Error())
+		}
 	}
 }
-
-// TODO(sean) Understand why RMQ needs a sidecar which reaches out to this service and possibly redesign to eliminate this entirely.
