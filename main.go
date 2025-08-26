@@ -106,6 +106,8 @@ func updateUploaderAccounts(accounts []Account, url string) error {
 		hasUsername[username] = true
 	}
 
+	accountsAdded := 0
+
 	for _, account := range accounts {
 		if account.Active && !hasUsername[account.Username] {
 			fmt.Println("adding user to uploader: ", account.Username)
@@ -113,12 +115,16 @@ func updateUploaderAccounts(accounts []Account, url string) error {
 			// TODO(sean) Review how this is implemented on the upload server side! Strange to have an
 			// unauthenticated post like this...
 			if resp, err := http.Post(url+"/user/"+account.Username, "", nil); err != nil {
-				return fmt.Errorf("adding user to uploader failed: %s", err.Error())
+				return fmt.Errorf("adding user to upload server failed: %s", err.Error())
 			} else if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("adding user to uploader failed")
+				return fmt.Errorf("adding user to upload server failed")
 			}
+
+			accountsAdded++
 		}
 	}
+
+	fmt.Printf("%d accounts added to upload server\n\n", accountsAdded)
 
 	return nil
 }
@@ -141,6 +147,8 @@ func updateRabbitmqAccounts(accounts []Account, url string, username string, pas
 		hasUsername[user.Name] = true
 	}
 
+	accountsAdded := 0
+
 	for _, account := range accounts {
 		if account.Active && !hasUsername[account.Username] {
 			fmt.Printf("adding rabbitmq user %s\n", account.Username)
@@ -148,8 +156,12 @@ func updateRabbitmqAccounts(accounts []Account, url string, username string, pas
 			if err := updateRabbitmqUser(rmqClient, account.Username); err != nil {
 				return fmt.Errorf("failed to update rabbitmq user: %s", err.Error())
 			}
+
+			accountsAdded++
 		}
 	}
+
+	fmt.Printf("\n%d accounts added to rabbitmq\n\n", accountsAdded)
 
 	return nil
 }
