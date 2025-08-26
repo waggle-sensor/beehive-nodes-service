@@ -124,7 +124,7 @@ func updateUploaderAccounts(accounts []Account, url string) error {
 		}
 	}
 
-	fmt.Printf("%d accounts added to upload server\n\n", accountsAdded)
+	fmt.Printf("\n%d accounts added to upload server\n\n", accountsAdded)
 
 	return nil
 }
